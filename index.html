@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Search & Rescue Drone GCS</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background-color: #2c3e50; color: white; margin-top: 20px; transition: background-color 0.5s;}
+        .dashboard-wrapper { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+        
+        /* ভিডিওর চারপাশে বর্ডার এবং শ্যাডো */
+        .camera-feed { background: #000; padding: 10px; border-radius: 10px; border: 3px solid #34495e; box-shadow: 0 10px 20px rgba(0,0,0,0.5); position: relative;}
+        .camera-feed img { width: 640px; height: 480px; border-radius: 5px; object-fit: cover; }
+        
+        /* ভিডিওর ওপর লাইভ ট্যাগ */
+        .live-tag { position: absolute; top: 20px; left: 20px; background: red; color: white; padding: 5px 10px; border-radius: 5px; font-weight: bold; font-size: 0.8rem; animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0; } }
+
+        .sensor-container { display: flex; justify-content: center; gap: 20px; flex-wrap: wrap;}
+        .card { background: #ecf0f1; color: #333; padding: 20px; border-radius: 15px; width: 180px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); transition: transform 0.3s; }
+        .card:hover { transform: translateY(-5px); }
+        
+        h2 { margin: 0; font-size: 1.1rem; color: #555;}
+        .value { font-size: 2.5rem; font-weight: bold; color: #2980b9; margin-top: 10px;}
+        
+        /* স্পেশাল কার্ড কালার */
+        .human-card { border-left: 5px solid #27ae60; }
+        .human-value { color: #27ae60 !important; }
+        
+        .danger-bg { background-color: #c0392b !important; }
+    </style>
+</head>
+<body id="bg">
+    <h1>Drone Search & Rescue Station</h1>
+    
+    <div class="dashboard-wrapper">
+        <div class="camera-feed">
+            <div class="live-tag">YOLOv8 LIVE</div>
+            <img id="video-stream" src="{{ url_for('video_feed') }}" alt="Connecting to YOLO Video Feed...">
+        </div>
+
+        <div class="sensor-container">
+            <div class="card human-card">
+                <h2>Humans Detected</h2>
+                <div class="value human-value"><span id="human-count">0</span></div>
+            </div>
+
+            <div class="card">
+                <h2>Temperature</h2>
+                <div class="value"><span id="temp">--</span> °C</div>
+            </div>
+            
+            <div class="card">
+                <h2>Humidity</h2>
+                <div class="value"><span id="hum">--</span> %</div>
+            </div>
+            
+            <div class="card">
+                <h2>Smoke Status</h2>
+                <div class="value" id="smoke">Waiting...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function fetchLiveData() {
+            fetch('/api/latest-data')
+                .then(response => response.json())
+                .then(data => {
+                    // ডেটা আপডেট করা
+                    document.getElementById('temp').innerText = data.temperature;
+                    document.getElementById('hum').innerText = data.humidity;
+                    document.getElementById('human-count').innerText = data.human_count; // নতুন লাইন
+                    
+                    let smokeStatus = document.getElementById('smoke');
+                    let bodyBg = document.getElementById('bg');
+                    if (data.smoke_detected === 1) {
+                        smokeStatus.innerText = "FIRE ALERT!";
+                        smokeStatus.style.color = "red";
+                        bodyBg.classList.add("danger-bg");
+                    } else {
+                        smokeStatus.innerText = "Clear";
+                        smokeStatus.style.color = "green";
+                        bodyBg.classList.remove("danger-bg");
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+        }
+
+        // প্রতি ১ সেকেন্ডে ডেটা আপডেট হবে (ভিডিওর সাথে সিঙ্ক রাখার জন্য দ্রুত করা হলো)
+        setInterval(fetchLiveData, 1000);
+        fetchLiveData(); 
+    </script>
+</body>
+</html>
