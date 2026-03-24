@@ -1,70 +1,149 @@
+// --- Blynk Credentials ---
+#define BLYNK_TEMPLATE_ID "TMPL3ccxYTX6V"
+#define BLYNK_TEMPLATE_NAME "Drone Fire Alert"
+#define BLYNK_AUTH_TOKEN "iYbBUDl3HN019w9rZbeYJdQrOLs4DGqn"
+
 #include <WiFi.h>
+#include <WiFiClient.h>
+#include <BlynkSimpleEsp32.h>
 #include <HTTPClient.h>
 #include "DHT.h"
+#include "esp_camera.h"
 
+// --- Camera Pins (AI-Thinker Model) ---
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
 
+// --- Sensor Pins ---
 #define DHTPIN 14     
 #define DHTTYPE DHT11 
 #define MQ2PIN 13     
 
 DHT dht(DHTPIN, DHTTYPE);
 
+// --- WiFi & Flask Server Config ---
 const char* ssid = "vivo y200";       
-const char* password = "19082005";   
-
+const char* password = "19082005";    
 const char* serverName = "http://10.210.138.173:5000/api/sensor-data"; 
+
+WiFiServer streamServer(81); 
+TaskHandle_t SensorTask;
+
+bool smokeAlertSent = false;
 
 void setup() {
   Serial.begin(115200);
   dht.begin();
+  pinMode(MQ2PIN, INPUT);
   
-  
-  pinMode(MQ2PIN, INPUT); 
-  
+
   WiFi.begin(ssid, password);
   Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
   Serial.println("\nConnected to WiFi!");
+  
+ 
+  Serial.print("Camera Stream IP: http://");
+  Serial.print(WiFi.localIP());
+  Serial.println(":81/stream");
+
+ 
+  Blynk.config(BLYNK_AUTH_TOKEN);
+  Blynk.connect();
+
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer = LEDC_TIMER_0;
+  config.pin_d0 = Y2_GPIO_NUM; config.pin_d1 = Y3_GPIO_NUM; config.pin_d2 = Y4_GPIO_NUM;
+  config.pin_d3 = Y5_GPIO_NUM; config.pin_d4 = Y6_GPIO_NUM; config.pin_d5 = Y7_GPIO_NUM;
+  config.pin_d6 = Y8_GPIO_NUM; config.pin_d7 = Y9_GPIO_NUM; config.pin_xclk = XCLK_GPIO_NUM;
+  config.pin_pclk = PCLK_GPIO_NUM; config.pin_vsync = VSYNC_GPIO_NUM; config.pin_href = HREF_GPIO_NUM;
+  config.pin_sccb_sda = SIOD_GPIO_NUM; config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn = PWDN_GPIO_NUM; config.pin_reset = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG; 
+  config.frame_size = FRAMESIZE_VGA;    
+  config.jpeg_quality = 12;
+  config.fb_count = 1;
+
+  if(esp_camera_init(&config) != ESP_OK) {
+    Serial.println("Camera init failed!");
+    return;
+  }
+
+  streamServer.begin();
+
+
+  xTaskCreatePinnedToCore(sendSensorData, "SensorTask", 10000, NULL, 1, &SensorTask, 0);
 }
 
+
 void loop() {
-  if(WiFi.status() == WL_CONNECTED){
-    HTTPClient http;
-    http.begin(serverName);
-    http.addHeader("Content-Type", "application/json");
-
+  WiFiClient client = streamServer.available();
+  if (client) {
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: multipart/x-mixed-replace; boundary=frame");
+    client.println();
     
-    float temp = dht.readTemperature();
-    float hum = dht.readHumidity();
-    
-   
-    int smokeRaw = digitalRead(MQ2PIN); 
-
-    
-    if (isnan(temp) || isnan(hum)) {
-      Serial.println("Failed to read from DHT sensor!");
-      return; 
+    while (client.connected()) {
+      camera_fb_t * fb = esp_camera_fb_get();
+      if (!fb) continue;
+      
+      client.printf("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", fb->len);
+      client.write(fb->buf, fb->len);
+      client.println("\r\n");
+      esp_camera_fb_return(fb);
     }
-
-   
-    int smokeDetected = (smokeRaw == LOW) ? 1 : 0;
-
-   
-    String jsonPayload = "{\"temperature\":" + String(temp) + 
-                         ",\"humidity\":" + String(hum) + 
-                         ",\"smoke_detected\":" + String(smokeDetected) + "}";
-
-    
-    int httpResponseCode = http.POST(jsonPayload);
-    
-    Serial.print("HTTP Response code: ");
-    Serial.println(httpResponseCode);
-    Serial.println("Sent: " + jsonPayload);
-    
-    http.end();
+    client.stop();
   }
-  delay(2000); 
+}
+
+// Core 0 (Background Task): সেন্সর ডেটা ফ্লাস্কে পাঠাবে + Blynk নোটিফিকেশন দেবে
+void sendSensorData(void * pvParameters) {
+  for(;;) {
+    Blynk.run(); 
+    
+    if(WiFi.status() == WL_CONNECTED) {
+      float temp = dht.readTemperature();
+      float hum = dht.readHumidity();
+      int smokeRaw = digitalRead(MQ2PIN);
+      int smokeDetected = (smokeRaw == LOW) ? 1 : 0;
+
+      // Blynk Notification
+      if (smokeDetected == 1 && !smokeAlertSent) {
+        Blynk.logEvent("fire_alert", "🔥 FIRE ALERT: detected by the Drone!  Check immediately");
+        Serial.println(">>> Blynk Notification Sent! <<<");
+        smokeAlertSent = true;
+      } else if (smokeDetected == 0) {
+        smokeAlertSent = false; 
+      }
+
+      // Flask Data
+      HTTPClient http;
+      http.begin(serverName);
+      http.addHeader("Content-Type", "application/json");
+
+      String jsonPayload = "{\"temperature\":" + String(temp) + 
+                           ",\"humidity\":" + String(hum) + 
+                           ",\"smoke_detected\":" + String(smokeDetected) + "}";
+
+      http.POST(jsonPayload);
+      http.end();
+    }
+    vTaskDelay(2000 / portTICK_PERIOD_MS); 
+  }
 }
