@@ -1,0 +1,70 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "DHT.h"
+
+
+#define DHTPIN 14     
+#define DHTTYPE DHT11 
+#define MQ2PIN 13     
+
+DHT dht(DHTPIN, DHTTYPE);
+
+const char* ssid = "vivo y200";       
+const char* password = "19082005";   
+
+const char* serverName = "http://10.210.138.173:5000/api/sensor-data"; 
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+  
+  
+  pinMode(MQ2PIN, INPUT); 
+  
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected to WiFi!");
+}
+
+void loop() {
+  if(WiFi.status() == WL_CONNECTED){
+    HTTPClient http;
+    http.begin(serverName);
+    http.addHeader("Content-Type", "application/json");
+
+    
+    float temp = dht.readTemperature();
+    float hum = dht.readHumidity();
+    
+   
+    int smokeRaw = digitalRead(MQ2PIN); 
+
+    
+    if (isnan(temp) || isnan(hum)) {
+      Serial.println("Failed to read from DHT sensor!");
+      return; 
+    }
+
+   
+    int smokeDetected = (smokeRaw == LOW) ? 1 : 0;
+
+   
+    String jsonPayload = "{\"temperature\":" + String(temp) + 
+                         ",\"humidity\":" + String(hum) + 
+                         ",\"smoke_detected\":" + String(smokeDetected) + "}";
+
+    
+    int httpResponseCode = http.POST(jsonPayload);
+    
+    Serial.print("HTTP Response code: ");
+    Serial.println(httpResponseCode);
+    Serial.println("Sent: " + jsonPayload);
+    
+    http.end();
+  }
+  delay(2000); 
+}
