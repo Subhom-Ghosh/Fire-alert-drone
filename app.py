@@ -5,7 +5,8 @@ import threading
 import time
 import os
 from playsound import playsound
-# নোটিফিকেশনের জন্য সহজ লাইব্রেরি
+import winsound
+
 try:
     from win10toast import ToastNotifier
     toaster = ToastNotifier()
@@ -14,23 +15,23 @@ except ImportError:
 
 app = Flask(__name__)
 
-# --- কনফিগারেশন ---
+
 ESP32_CAM_IP = "10.210.138.123" 
 CAMERA_STREAM_URL = f"http://{ESP32_CAM_IP}:81/stream"
 ALARM_FILE = "alarm.mp3" 
 
-# গ্লোবাল ভেরিয়েবল
+
 latest_data = {
     "temperature": 0.0,
     "humidity": 0.0,
     "smoke_detected": 0,
     "human_count": 0 
 }
-last_alert_time = 0 
+is_alarm_playing = False 
 lock = threading.Lock()
 processed_frame = None
 
-# --- ফাংশন: ডেস্কটপ নোটিফিকেশন (সহজ ভার্সন) ---
+
 def send_desktop_notification(title, message):
     if toaster:
         try:
@@ -40,7 +41,7 @@ def send_desktop_notification(title, message):
     else:
         print(f"⚠️ {title}: {message} (Install win10toast for popups)")
 
-# --- ফাংশন: অ্যালার্ম বাজানো ---
+
 def play_alarm():
     if os.path.exists(ALARM_FILE):
         try:
@@ -49,7 +50,7 @@ def play_alarm():
         except Exception as e:
             print(f"Sound Error: {e}")
     else:
-        print(f"❌ {ALARM_FILE} পাওয়া যায়নি!")
+        print(f"❌ {ALARM_FILE} not found")
 
 print("Loading YOLOv8 model...")
 model = YOLO("yolov8n.pt") 
